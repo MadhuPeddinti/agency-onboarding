@@ -1,0 +1,77 @@
+version: "3.8"
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: agency_mysql_dev
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${DB_NAME}
+      MYSQL_USER: ${DB_USER}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "3307:3306" # Different port for dev to avoid conflicts
+    volumes:
+      - mysql_data_dev:/var/lib/mysql
+      # - ./init-scripts:/docker-entrypoint-initdb.d
+    networks:
+      - agency_network_dev
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "mysqladmin",
+          "ping",
+          "-h",
+          "localhost",
+          "-u",
+          "root",
+          "-p${MYSQL_ROOT_PASSWORD}",
+        ]
+      timeout: 10s
+      retries: 10
+      interval: 10s
+    command: --pid-file=/var/lib/mysql/mysqld.pid # Fixes insecure PID warning
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: agency_app_dev
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+      - "9229:9229" # Debug port
+    environment:
+      NODE_ENV: ${NODE_ENV}
+      PORT: ${PORT}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+    volumes:
+      # Mount source code for hot reload
+      - .:/usr/src/app
+      - node_modules_dev:/usr/src/app/node_modules
+      - ./uploads:/usr/src/app/uploads
+    networks:
+      - agency_network_dev
+    depends_on:
+      mysql:
+        condition: service_healthy
+    stdin_open: true
+    tty: true
+
+# volumes:
+#   mysql_data_dev:
+#     driver: local
+
+volumes:
+  mysql_data_dev:
+  node_modules_dev:
+
+networks:
+  agency_network_dev:
+    driver: bridge
