@@ -392,8 +392,26 @@ step 5 should be directly type the keys and upload files
     }
 
 
-step 5 should be directly type the keys and upload files 
-
-
+step 5 should be directly type the keys in the form-data and upload files 
+bbi_certificate
+wealth_tax_certificate
+valuers_org_membership
+professional_bodies
+kyc_documents
+pan_card
+address_proof
+education_certificates
+professional_certificates
+experience_documents
+employment_certificates
+it_returns
+gst_registration
+cancelled_cheque
+photographs
+moa_aoa
+partnership_deed
+company_profile
+board_resolution
+authorized_signatory
 
  */
