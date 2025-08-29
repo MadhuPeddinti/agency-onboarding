@@ -1,4 +1,3 @@
-// server.js
 const express = require("express");
 const mysql = require("mysql2/promise");
 const multer = require("multer");
@@ -18,7 +17,7 @@ app.use(cors());
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
-// ========= DB connection pool setup (same as before) =========
+// ========= DB connection pool setup =========
 
 // Database configuration
 const dbConfig = {
@@ -293,11 +292,12 @@ const createTables = async () => {
     CREATE TABLE IF NOT EXISTS attachments (
         id INT PRIMARY KEY AUTO_INCREMENT,
         app_id VARCHAR(36) NOT NULL,
-        personnel_id VARCHAR(36) NOT NULL,
+        personnel_id VARCHAR(36) DEFAULT NULL,
         document_type VARCHAR(100) NOT NULL,
         file_name VARCHAR(255) NOT NULL,
         file_path VARCHAR(500) NOT NULL,
         file_size INT,
+        original_file_name VARCHAR(255) NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         INDEX idx_app_id (app_id),
         INDEX idx_document_type (document_type),
@@ -756,22 +756,11 @@ app.post(
         });
       }
       const maxSteps = getMaxSteps(agentType);
-
-      console.log(agentType, "agentType");
+      // Validate step number
       if (agentType === "INDIVIDUAL" && step_number === 0) {
         return res.status(400).json({
           success: false,
           message: `Invalid step_number. Must be between 1 and ${
-            maxSteps - 1
-          } for ${agentType} type.`,
-        });
-      }
-
-      // Validate step number
-      if (step_number < 0 || step_number >= maxSteps) {
-        return res.status(400).json({
-          success: false,
-          message: `Invalid step_number. Must be between 0 and ${
             maxSteps - 1
           } for ${agentType} type.`,
         });
@@ -1041,68 +1030,6 @@ const savePersonnelDetails = async (
   return personnelIds;
 };
 
-// const saveQualifications = async (connection, personnel) => {
-//   // Step 2 - No file uploads, pure JSON processing
-//   for (const person of personnel) {
-//     const personnelId = person.personnel_id;
-
-//     // Delete existing qualifications for this person
-//     await connection.execute(
-//       "DELETE FROM educational_qualifications WHERE personnel_id = ?",
-//       [personnelId]
-//     );
-//     await connection.execute(
-//       "DELETE FROM professional_qualifications WHERE personnel_id = ?",
-//       [personnelId]
-//     );
-
-//     // Save educational qualifications
-//     if (
-//       person.educationalQualifications &&
-//       person.educationalQualifications.length > 0
-//     ) {
-//       for (const edu of person.educationalQualifications) {
-//         await connection.execute(
-//           `INSERT INTO educational_qualifications
-//            (personnel_id, qualification, year_of_passing, marks_percent, grade_class, university_college, remarks)
-//            VALUES (?, ?, ?, ?, ?, ?, ?)`,
-//           [
-//             personnelId,
-//             edu.qualification,
-//             edu.yearOfPassing,
-//             edu.marksPercent,
-//             edu.gradeClass,
-//             edu.universityCollege,
-//             edu.remarks || null,
-//           ]
-//         );
-//       }
-//     }
-
-//     // Save professional qualifications
-//     if (
-//       person.professionalQualifications &&
-//       person.professionalQualifications.length > 0
-//     ) {
-//       for (const prof of person.professionalQualifications) {
-//         await connection.execute(
-//           `INSERT INTO professional_qualifications
-//            (personnel_id, qualification, institute, membership_no, date_of_enrolment, remarks)
-//            VALUES (?, ?, ?, ?, ?, ?)`,
-//           [
-//             personnelId,
-//             prof.qualification,
-//             prof.institute,
-//             prof.membershipNo,
-//             prof.dateOfEnrolment,
-//             prof.remarks || null,
-//           ]
-//         );
-//       }
-//     }
-//   }
-// };
-
 const saveQualifications = async (connection, personnel, request_uuid) => {
   for (const person of personnel) {
     const personnelId = person.personnel_id;
@@ -1275,13 +1202,14 @@ const saveStepAttachments = async (
       for (const file of files) {
         if (file && file.filename) {
           await connection.execute(
-            "INSERT INTO attachments (app_id, document_type, file_name, file_path, file_size) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO attachments (app_id, document_type, file_name, file_path, file_size, original_file_name) VALUES (?, ?, ?, ?, ?, ?)",
             [
               appId,
               `${documentCategory}_${fieldName}`,
               file.filename,
               file.path,
               file.size || 0,
+              file.originalName,
             ]
           );
         }
@@ -1399,72 +1327,98 @@ app.get("/api/agency-onboarding/:request_uuid", async (req, res) => {
         [request_uuid]
       );
 
-      applicationData.steps[1] = {
-        personnel: personnel.map((person) => ({
-          personnel_id: person.personnel_id,
-          title: person.title,
-          name: person.name,
-          fatherName: person.father_name,
-          motherName: person.mother_name,
-          dateOfBirth: person.date_of_birth,
-          wealthTaxRegistration: person.wealth_tax_registration,
-          wealthTaxRegistrationDetails: person.wealth_tax_registration_details,
-          ibbiRegistrationNumber: person.ibbi_registration_number,
-          panNumber: person.pan_number,
-          aadhaarNumber: person.aadhaar_number,
-          passportNumber: person.passport_number,
-          gstNumber: person.gst_number,
-          correspondenceAddress: {
-            addressLine1: person.correspondence_address_line1,
-            addressLine2: person.correspondence_address_line2,
-            city: person.correspondence_city,
-            state: person.correspondence_state,
-            pincode: person.correspondence_pincode,
-          },
-          permanentAddress: {
-            addressLine1: person.permanent_address_line1,
-            addressLine2: person.permanent_address_line2,
-            city: person.permanent_city,
-            state: person.permanent_state,
-            pincode: person.permanent_pincode,
-          },
-          emailAddress: person.email_address,
-          mobileNumber: person.mobile_number,
-          photoUpload: person.photo_upload,
-          isSameAsCorrespondence: person.is_same_as_correspondence,
-          educationalQualifications: [],
-          professionalQualifications: [],
-          experienceDetails: [],
-        })),
-      };
+      if (personnel.length > 0) {
+        applicationData.steps[1] = {
+          personnel: personnel.map((person) => ({
+            personnel_id: person.personnel_id,
+            title: person.title,
+            name: person.name,
+            fatherName: person.father_name,
+            motherName: person.mother_name,
+            dateOfBirth: person.date_of_birth,
+            wealthTaxRegistration: person.wealth_tax_registration,
+            wealthTaxRegistrationDetails:
+              person.wealth_tax_registration_details,
+            ibbiRegistrationNumber: person.ibbi_registration_number,
+            panNumber: person.pan_number,
+            aadhaarNumber: person.aadhaar_number,
+            passportNumber: person.passport_number,
+            gstNumber: person.gst_number,
+            correspondenceAddress: {
+              addressLine1: person.correspondence_address_line1,
+              addressLine2: person.correspondence_address_line2,
+              city: person.correspondence_city,
+              state: person.correspondence_state,
+              pincode: person.correspondence_pincode,
+            },
+            permanentAddress: {
+              addressLine1: person.permanent_address_line1,
+              addressLine2: person.permanent_address_line2,
+              city: person.permanent_city,
+              state: person.permanent_state,
+              pincode: person.permanent_pincode,
+            },
+            emailAddress: person.email_address,
+            mobileNumber: person.mobile_number,
+            photoUpload: person.photo_upload,
+            isSameAsCorrespondence: person.is_same_as_correspondence,
+          })),
+        };
 
-      // Step 2 & 3: Qualifications & Experience
-      for (let i = 0; i < applicationData.steps[1].personnel.length; i++) {
-        const personnelId = applicationData.steps[1].personnel[i].personnel_id;
+        // Prepare placeholders for Step 2 and 3
+        let step2Personnel = [];
+        let step3Personnel = [];
 
-        // Educational
-        const [eduQual] = await connection.execute(
-          "SELECT * FROM educational_qualifications WHERE personnel_id = ?",
-          [personnelId]
-        );
-        applicationData.steps[1].personnel[i].educationalQualifications =
-          eduQual || [];
+        for (let i = 0; i < personnel.length; i++) {
+          const personnelId = personnel[i].personnel_id;
 
-        // Professional
-        const [profQual] = await connection.execute(
-          "SELECT * FROM professional_qualifications WHERE personnel_id = ?",
-          [personnelId]
-        );
-        applicationData.steps[1].personnel[i].professionalQualifications =
-          profQual || [];
+          // Educational
+          const [eduQual] = await connection.execute(
+            "SELECT * FROM educational_qualifications WHERE personnel_id = ?",
+            [personnelId]
+          );
 
-        // Experience
-        const [expDetails] = await connection.execute(
-          "SELECT * FROM experience_details WHERE personnel_id = ?",
-          [personnelId]
-        );
-        applicationData.steps[1].personnel[i].experienceDetails =
-          expDetails || [];
+          // Professional
+          const [profQual] = await connection.execute(
+            "SELECT * FROM professional_qualifications WHERE personnel_id = ?",
+            [personnelId]
+          );
+
+          // Experience
+          const [expDetails] = await connection.execute(
+            "SELECT * FROM experience_details WHERE personnel_id = ?",
+            [personnelId]
+          );
+
+          // Add to Step 2 if data exists
+          if (
+            (eduQual && eduQual.length > 0) ||
+            (profQual && profQual.length > 0)
+          ) {
+            step2Personnel.push({
+              personnel_id: personnelId,
+              educationalQualifications: eduQual || [],
+              professionalQualifications: profQual || [],
+            });
+          }
+
+          // Add to Step 3 if data exists
+          if (expDetails && expDetails.length > 0) {
+            step3Personnel.push({
+              personnel_id: personnelId,
+              experienceDetails: expDetails || [],
+            });
+          }
+        }
+
+        // Only assign if data exists
+        if (step2Personnel.length > 0) {
+          applicationData.steps[2] = { personnel: step2Personnel };
+        }
+
+        if (step3Personnel.length > 0) {
+          applicationData.steps[3] = { personnel: step3Personnel };
+        }
       }
     };
 
@@ -1480,19 +1434,71 @@ app.get("/api/agency-onboarding/:request_uuid", async (req, res) => {
     };
 
     const addStep5 = async () => {
-      // work in progress
-      applicationData.steps[5] = { attachments: {} };
+      const [attachments] = await connection.execute(
+        `SELECT 
+            REPLACE(document_type, 'FINAL_ATTACHMENTS_', '') AS document_type,
+            original_file_name
+          FROM attachments
+          WHERE app_id = ?
+            AND document_type LIKE 'FINAL_ATTACHMENTS_%'`,
+        [request_uuid]
+      );
+
+      const docTypes = [
+        "ibbi_certificate",
+        "wealth_tax_certificate",
+        "valuers_org_membership",
+        "professional_bodies",
+        "kyc_documents",
+        "pan_card",
+        "address_proof",
+        "education_certificates",
+        "professional_certificates",
+        "experience_documents",
+        "employment_certificates",
+        "it_returns",
+        "gst_registration",
+        "cancelled_cheque",
+        "photographs",
+        "moa_aoa",
+        "partnership_deed",
+        "company_profile",
+        "board_resolution",
+        "authorized_signatory",
+      ];
+
+      // initialize response with empty arrays
+      const result = {};
+      docTypes.forEach((type) => {
+        result[type] = [];
+      });
+
+      // group file names by document_type
+      if (attachments.length > 0) {
+        attachments.forEach((att) => {
+          if (result[att.document_type]) {
+            result[att.document_type].push(att.original_file_name);
+          }
+        });
+
+        applicationData.steps[5] = { attachments: result };
+      }
     };
 
     // Add steps based on stepNumber
     if (stepNumber === null) {
-      await addStep0();
+      if (applicationData.agent_type === "CORPORATE") await addStep0();
       await addStep1to3();
       await addStep4();
       await addStep5();
     } else {
       switch (stepNumber) {
         case 0:
+          if (applicationData.agent_type === "INDIVIDUAL")
+            return res.status(400).json({
+              success: false,
+              message: "Invalid step number",
+            });
           await addStep0();
           break;
         case 1:
@@ -1529,7 +1535,7 @@ app.get("/api/agency-onboarding/:request_uuid", async (req, res) => {
   }
 });
 
-// ========= Graceful shutdown (same as before) =========
+// ========= Graceful shutdown =========
 process.on("SIGINT", async () => {
   if (pool) await pool.end();
   process.exit(0);
